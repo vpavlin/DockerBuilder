@@ -30,7 +30,9 @@ import ConfigParser
 from git import Repo
 import docker
 
-
+__version__ = "0.1"
+__updated__ = "2014-06-17"
+__date__ = "2014-06-01"
 
 logging.basicConfig()
 logger = logging.getLogger('DockerBuilder')
