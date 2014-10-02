@@ -73,9 +73,10 @@ class DockerBuilder():
     tag = None
     push = False
     save = False
+    keep_containers = False
     
 
-    def __init__(self, conf=None, debug=False, source=None, builddirs=None, errlog=None, recurse=False, dryrun=False, tag=None, push=False, save=False):
+    def __init__(self, conf=None, debug=False, source=None, builddirs=None, errlog=None, recurse=False, dryrun=False, tag=None, push=False, save=False, keep_containers=False):
         '''
         Constructor
         '''
@@ -114,7 +115,10 @@ class DockerBuilder():
 
         if save:
             self.save = save
-            
+ 
+        if keep_containers:
+            self.keep_containers = keep_containers
+           
             
         self.repo_path = tempfile.mkdtemp()
         self.client = docker.Client(timeout=300)
@@ -143,7 +147,7 @@ class DockerBuilder():
         for o in conf.options('DockerBuild'):
             if o == 'tag' or o == 'builddirs':
                 setattr(self, o, scrub_list(conf.get('DockerBuild', o)))
-            elif o in ('recurse', 'push', 'dryrun', 'save'):
+            elif o in ('recurse', 'push', 'dryrun', 'save', 'keep_containers'):
                 setattr(self, o, conf.getboolean('DockerBuild', o))
             else:
                 setattr(self, o, conf.get('DockerBuild', o))
@@ -219,14 +223,17 @@ class DockerBuilder():
                             logger.error(last_line['error'])
                             self._writeError(f, l)
                             logger.error("Build of the image %s failed. See %s for more details." % (name, _errlog))
+                            if not self.keep_containers:
+                                self._removeArtefacts(name)
                             continue
+
                     self._addBuildId(name, id)
                     endtime = time.time()
                     logger.info("Image %s built with id %s in %i s" % (name, id, (endtime-starttime)))
                 if self.tag:
                     self._tagImage(name)
 
-                if id:
+                if id and self.save:
                     self._saveContainer(id, name)
                     
 
@@ -285,7 +292,7 @@ class DockerBuilder():
         with open(save_name, 'wb') as fi:
             fi.write(self.client.get_image(id).read())
 
-        if os.path.isfile(save_name):
+        if not self.keep_containers and os.path.isfile(save_name):
             self._removeArtefacts(name)
 
 def main(argv=None): # IGNORE:C0111
@@ -329,6 +336,7 @@ USAGE
     parser.add_argument("-t", "--tag", dest="tag", help="List of registries image should be tagged to")
     parser.add_argument("-p", "--push", dest="push", default=False, action='store_true', help="Push built images")
     parser.add_argument("--save", dest="save", default=False, action='store_true', help="Save images locally and remove them from local Docker storage")
+    parser.add_argument("--keep-containers", dest="keep_containers", default="False", action='store_true', help="Do not remove intermediate containers after build")
  #    parser.add_argument('-V', '--version', action='version', version=program_version_message)
      
     # Process arguments
@@ -339,7 +347,7 @@ USAGE
     if verbose > 0:
         print("Verbose mode on")
 
-    db = DockerBuilder(args.config, args.debug, args.source, args.builddirs, args.errlog, args.recurse, args.dryrun, args.tag, args.push, args.save)
+    db = DockerBuilder(args.config, args.debug, args.source, args.builddirs, args.errlog, args.recurse, args.dryrun, args.tag, args.push, args.save, args.keep_containers)
     db.prepareBuildroot()
     db.checkBuildDirs()
     db.build()
