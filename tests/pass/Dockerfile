@@ -1,4 +1,4 @@
 FROM fedora
 
-RUN yum -y install httpd
+RUN ls
 ENV container docker
