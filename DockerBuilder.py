@@ -17,12 +17,12 @@ It defines classes_and_methods
 '''
 
 import sys
-import os
+import os, io
 import logging
 import tempfile
 import shutil
 import time, datetime
-import re
+import re, json
 
 from argparse import ArgumentParser
 from argparse import RawDescriptionHelpFormatter
@@ -72,9 +72,10 @@ class DockerBuilder():
     recurse = False
     tag = None
     push = False
+    save = False
     
 
-    def __init__(self, conf=None, debug=False, source=None, builddirs=None, errlog=None, recurse=False, dryrun=False, tag=None, push=False):
+    def __init__(self, conf=None, debug=False, source=None, builddirs=None, errlog=None, recurse=False, dryrun=False, tag=None, push=False, save=False):
         '''
         Constructor
         '''
@@ -110,6 +111,9 @@ class DockerBuilder():
             
         if push:
             self.push = push
+
+        if save:
+            self.save = save
             
             
         self.repo_path = tempfile.mkdtemp()
@@ -139,7 +143,7 @@ class DockerBuilder():
         for o in conf.options('DockerBuild'):
             if o == 'tag' or o == 'builddirs':
                 setattr(self, o, scrub_list(conf.get('DockerBuild', o)))
-            elif o in ('recurse', 'push', 'dryrun'):
+            elif o in ('recurse', 'push', 'dryrun', 'save'):
                 setattr(self, o, conf.getboolean('DockerBuild', o))
             else:
                 setattr(self, o, conf.get('DockerBuild', o))
@@ -178,6 +182,18 @@ class DockerBuilder():
             for d in os.listdir(path):
                 if os.path.isdir(os.path.join(path, d)) and not d.startswith("."):
                     self._checkBuildDir(os.path.join(path,d))
+
+    def _writeError(self, f, stream_list):
+        for l in stream_list:
+            j = json.loads(l)
+            if 'stream' in j:
+                f.write(j['stream'])
+            elif 'error' in j:
+                f.write(j['error'])
+            else:
+                f.write(l)
+
+
                     
     def build(self):
         _errlog = str(time.time())+"-"+self.errlog
@@ -188,16 +204,32 @@ class DockerBuilder():
                 logger.info("Building %s" % name)
                 starttime = time.time()
                 if not self.dryrun:
-                    id, output = self.client.build(path=item["path"], nocache=True, tag=name)
+                    stream = self.client.build(path=item["path"], nocache=True, tag=name, stream=False, rm=True)
+                    l = list(stream)
+                    last_line = json.loads(l[-1])
+                    
+                    id = None
+                    if 'stream' in last_line:
+                        logger.info("Last stream line: %s" % l[-1])
+                        match_id = re.search(r'.*Successfully built ([a-z0-9]+)', last_line['stream'])
+                        if match_id:
+                            id = match_id.group(1)
                     if not id:
-                        f.write(output)
-                        logger.error("Build of the image %s failed. See %s for more details." % (name, self.errlog))
-                        continue
+                        if 'error' in last_line:
+                            logger.error(last_line['error'])
+                            self._writeError(f, l)
+                            logger.error("Build of the image %s failed. See %s for more details." % (name, _errlog))
+                            continue
                     self._addBuildId(name, id)
                     endtime = time.time()
                     logger.info("Image %s built with id %s in %i s" % (name, id, (endtime-starttime)))
                 if self.tag:
                     self._tagImage(name)
+
+                if id:
+                    self._saveContainer(id, name)
+                    
+
         logger.info(self.buildpaths)
     
     def _getImageName(self, path):
@@ -227,6 +259,9 @@ class DockerBuilder():
         return name
     
     def _tagImage(self, name):
+        if not self.tag:
+            logger.error("Na tags specified!")
+            return
         for t in self.tag:
             logger.info("Tagging image %s to registry %s" % (name, t))
             if not self.dryrun:
@@ -235,7 +270,23 @@ class DockerBuilder():
                 logger.info("Pushing image %s to registry %s" % (name, t))
                 if not self.dryrun:
                     self.client.push(os.path.join(t, name))
-        
+
+    def _removeArtefacts(self, name):
+        self.client.remove_image(name)
+        if self.tag:
+            for t in self.tag:
+                self.client.remove_image(os.path.join(t, name))
+
+    def _saveContainer(self, id, name):
+        path, filename = name.split("/")
+        save_name = os.path.join(path, filename+".tar")
+        if not os.path.isdir(path):
+            os.mkdir(path)
+        with open(save_name, 'wb') as fi:
+            fi.write(self.client.get_image(id).read())
+
+        if os.path.isfile(save_name):
+            self._removeArtefacts(name)
 
 def main(argv=None): # IGNORE:C0111
     '''Command line options.'''
@@ -277,6 +328,7 @@ USAGE
     parser.add_argument("--dry-run", dest="dryrun", default=False, action='store_true', help="Do not build, tag or push anything - just print output as if...")
     parser.add_argument("-t", "--tag", dest="tag", help="List of registries image should be tagged to")
     parser.add_argument("-p", "--push", dest="push", default=False, action='store_true', help="Push built images")
+    parser.add_argument("--save", dest="save", default=False, action='store_true', help="Save images locally and remove them from local Docker storage")
  #    parser.add_argument('-V', '--version', action='version', version=program_version_message)
      
     # Process arguments
@@ -287,7 +339,7 @@ USAGE
     if verbose > 0:
         print("Verbose mode on")
 
-    db = DockerBuilder(args.config, args.debug, args.source, args.builddirs, args.errlog, args.recurse, args.dryrun, args.tag, args.push)
+    db = DockerBuilder(args.config, args.debug, args.source, args.builddirs, args.errlog, args.recurse, args.dryrun, args.tag, args.push, args.save)
     db.prepareBuildroot()
     db.checkBuildDirs()
     db.build()
