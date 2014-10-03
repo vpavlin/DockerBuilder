@@ -233,8 +233,11 @@ class DockerBuilder():
                 if self.tag:
                     self._tagImage(name)
 
-                if id and self.save:
+                if id and self.save:                   
                     self._saveContainer(id, name)
+
+                if not self.keep_containers:
+                    self._removeArtefacts(name)
                     
 
         logger.info(self.buildpaths)
@@ -290,10 +293,10 @@ class DockerBuilder():
         if not os.path.isdir(path):
             os.mkdir(path)
         with open(save_name, 'wb') as fi:
+            logger.info("Saving image to %s." % save_name)
             fi.write(self.client.get_image(id).read())
 
-        if not self.keep_containers and os.path.isfile(save_name):
-            self._removeArtefacts(name)
+        
 
 def main(argv=None): # IGNORE:C0111
     '''Command line options.'''
