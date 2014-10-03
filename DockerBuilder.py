@@ -121,7 +121,7 @@ class DockerBuilder():
            
             
         self.repo_path = tempfile.mkdtemp()
-        self.client = docker.Client(timeout=300)
+        self.client = docker.Client(timeout=3600)
     
     def __del__(self):
         if self.repo_path and os.path.exists(self.repo_path) and self.debug:
@@ -260,7 +260,7 @@ class DockerBuilder():
             leftdir = os.path.dirname(leftdir)
             
         path_name.reverse()
-        name = "%s-%s" % (from_image, '-'.join(path_name))
+        name = "%s-%s" % (from_image.split("/")[-1], '-'.join(path_name))
         if self.repo:
             name = "%s/%s" % (self.repo, name)
         return name
